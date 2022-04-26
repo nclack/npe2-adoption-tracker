@@ -5,7 +5,7 @@ very hacky attempt at assessing npe2 adoption
 
 1. Get a list of plugins via api.napari-hub.org
 2. Filter by date
-   - Napari 0.4.13 release was 17 Jan 2022
+   - napari 0.4.13 release was 17 Jan 2022
    - Look at all plugins with “release_date” after 01 Feb 2022
    - Fudge the date by two weeks to allow for plugins started just before the 0.4.13 to get released.
 3. For each plugin

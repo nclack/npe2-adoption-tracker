@@ -1,4 +1,4 @@
-# npe2-adoption-tracker
+# npe2-adoption-tracker ![build](https://github.com/nclack/npe2-adoption-tracker/actions/workflows/build.yml/badge.svg)
 very hacky attempt at assessing npe2 adoption
 
 ### Method

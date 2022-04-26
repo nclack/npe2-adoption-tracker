@@ -6,10 +6,10 @@ use futures::{
     future::ready,
     stream::{self, StreamExt},
 };
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
 
 use tokio::runtime::Builder;
-use tracing::{info, info_span, instrument, debug_span, Instrument};
+use tracing::{debug_span, info, info_span, instrument, Instrument};
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
@@ -22,6 +22,7 @@ struct Stats {
     success: usize,
     npe2: usize,
     stragglers: Vec<String>,
+    failures: Vec<String>,
 }
 
 #[instrument]
@@ -37,29 +38,33 @@ async fn analyze_plugin(client: &Client, repo: &str, branch: &str) -> Result<(bo
         );
         info!("Fetching {}", url);
         match client
-            .get(url)
+            .get(url.clone())
             .send()
             .instrument(debug_span!("Github request"))
             .await
         {
             Ok(response) => {
-                let body = response
-                    .text()
-                    .instrument(debug_span!("Github: Fetch content"))
-                    .await?;
-                let is_npe2 = ["napari.yaml", "napari.yml"]
-                    .into_iter()
-                    .any(|tgt| body.find(tgt).is_some());
-                any = true;
-                if is_npe2 {
-                    info!("DETECTED NPE2 for {}", repo);
-                    return Ok((true, true));
+                if response.status() == StatusCode::OK {
+                    let body = response
+                        .text()
+                        .instrument(debug_span!("Github: Fetch content"))
+                        .await?;
+                    let is_npe2 = ["napari.yaml", "napari.yml"]
+                        .into_iter()
+                        .any(|tgt| body.find(tgt).is_some());
+                    any = true;
+                    if is_npe2 {
+                        info!("DETECTED NPE2 for {}", repo);
+                        return Ok((true, true));
+                    }
                 }
             }
-            Err(_) => {}
+            Err(_) => {
+                info!("Failed to fetch {}", url);
+            }
         }
     }
-    info!("No npe2 for {}", repo);
+    info!("Did not detect npe2 for {} {}", repo, branch);
     Ok((any, false))
 }
 
@@ -73,7 +78,6 @@ async fn run() -> Result<()> {
         .await?;
 
     let date_cutoff =
-        // DateTime::parse_from_str("2022-01-17 12:24:00 -08:00", "%Y-%m-%d %H:%M:%S %z")?;
         DateTime::parse_from_str("2022-02-01 00:00:00 -08:00", "%Y-%m-%d %H:%M:%S %z")?;
 
     let client = Client::new();
@@ -99,7 +103,7 @@ async fn run() -> Result<()> {
                 let res: serde_json::Value =
                     serde_json::from_str(&body).expect("Expected a json body.");
                 let release_date =
-                    DateTime::parse_from_rfc3339(res["release_date"].as_str().unwrap())
+                    DateTime::parse_from_rfc3339(res["first_released"].as_str().unwrap())
                         .expect("Could not parse as rfc3339 datetime string");
                 if release_date > date_cutoff {
                     Some(res)
@@ -122,18 +126,27 @@ async fn run() -> Result<()> {
                 let repo = repo.clone();
                 async move {
                     let mut stats = acc;
+                    let mut any = false;
+                    let mut is_npe2 = false;
                     stats.total += 1;
                     for branch in branches {
-                        if let Ok((any, is_npe2)) = analyze_plugin(client, &repo, branch).await {
-                            if any && !is_npe2 {
-                                stats.stragglers.push(repo.clone());
-                            }
-                            if any || is_npe2 {
-                                stats.success += any as usize;
-                                stats.npe2 += is_npe2 as usize;
+                        if let Ok((any_, is_npe2_)) = analyze_plugin(client, &repo, branch).await {
+                            any |= any_;
+                            is_npe2 |= is_npe2_;
+                            if is_npe2 {
                                 break;
                             }
                         }
+                    }
+                    if any && !is_npe2 {
+                        stats.stragglers.push(format!("https://github.com/{}",repo.clone()));
+                    }
+                    if any || is_npe2 {
+                        stats.success += any as usize;
+                        stats.npe2 += is_npe2 as usize;
+                    }
+                    if !any {
+                        stats.failures.push(format!("https://github.com/{}",repo.clone()));
                     }
                     stats
                 }

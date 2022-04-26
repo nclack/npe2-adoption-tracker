@@ -1,12 +1,18 @@
 use std::collections::HashMap;
 
-use anyhow::{Result};
+use anyhow::Result;
 use chrono::DateTime;
 use futures::{
     future::ready,
     stream::{self, StreamExt},
 };
 use reqwest::Client;
+
+use tokio::runtime::Builder;
+use tracing::{info_span, instrument, trace_span, Instrument, info};
+use tracing_chrome::ChromeLayerBuilder;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::EnvFilter;
 
 const CONCURRENT_REQUESTS: usize = 2;
 
@@ -17,36 +23,10 @@ struct Stats {
     npe2: usize,
 }
 
-// async fn analyze_plugin(repo: &str, branch: &str) -> Result<(bool, bool)> {
-//     let setups = ["setup.cfg", "setup.py"];
-//     let mut any=false;
-//     for setup in setups {
-//         let url = format!(
-//             "https://raw.githubusercontent.com/{repo}/{branch}/{setup}",
-//             repo = repo,
-//             branch = branch,
-//             setup = setup
-//         );
-//         match reqwest::get(url).await {
-//             Ok(response) => {
-//                 let body = response.text().await?;
-//                 let is_npe2 = ["napari.yaml", "napari.yml"]
-//                     .into_iter()
-//                     .any(|tgt| body.find(tgt).is_some());
-//                 any = true;
-//                 if is_npe2 {
-//                     return Ok((true,true))
-//                 }
-//             }
-//             Err(_) => {}
-//         }
-//     }
-//     Ok((any,false))
-// }
-
+#[instrument]
 async fn analyze_plugin2(client: &Client, repo: &str, branch: &str) -> Result<(bool, bool)> {
     let setups = ["setup.cfg", "setup.py"];
-    let mut any=false;
+    let mut any = false;
     for setup in setups {
         let url = format!(
             "https://raw.githubusercontent.com/{repo}/{branch}/{setup}",
@@ -54,6 +34,7 @@ async fn analyze_plugin2(client: &Client, repo: &str, branch: &str) -> Result<(b
             branch = branch,
             setup = setup
         );
+        info!("Fetching {}",url);
         match client.get(url).send().await {
             Ok(response) => {
                 let body = response.text().await?;
@@ -61,18 +42,18 @@ async fn analyze_plugin2(client: &Client, repo: &str, branch: &str) -> Result<(b
                     .into_iter()
                     .any(|tgt| body.find(tgt).is_some());
                 any = true;
-                if is_npe2 {
-                    return Ok((true,true))
+                if is_npe2 {                    
+                    return Ok((true, true));
                 }
             }
             Err(_) => {}
         }
     }
-    Ok((any,false))
+    Ok((any, false))
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+#[instrument]
+async fn run() -> Result<()> {
     let resp = reqwest::get("https://api.napari-hub.org/plugins")
         .await?
         .json::<HashMap<String, String>>()
@@ -90,8 +71,10 @@ async fn main() -> Result<()> {
                 client
                     .get(format!("https://api.napari-hub.org/plugins/{}", plugin))
                     .send()
+                    .instrument(trace_span!("GET napari-hub Header"))
                     .await?
                     .text()
+                    .instrument(trace_span!("GET napari-hub Content"))
                     .await
             }
         })
@@ -121,66 +104,43 @@ async fn main() -> Result<()> {
                 .trim_start_matches("https://github.com/")
                 .to_owned();
             let branches = ["main", "master"];
-            let client=&client;
-            async move {
-                let mut stats=acc;
-                stats.total+=1;
-                for branch in branches {
-                    if let Ok((any,is_npe2))=analyze_plugin2(client,&repo,branch).await {
-                        if any || is_npe2 {
-                            stats.success+=any as usize;
-                            stats.npe2+=is_npe2 as usize;
-                            break;
+            let client = &client;
+            {
+                let repo = repo.clone();
+                async move {
+                    let mut stats = acc;
+                    stats.total += 1;
+                    for branch in branches {
+                        if let Ok((any, is_npe2)) = analyze_plugin2(client, &repo, branch).await {
+                            if any || is_npe2 {
+                                stats.success += any as usize;
+                                stats.npe2 += is_npe2 as usize;
+                                break;
+                            }
                         }
                     }
+                    stats
                 }
-                stats
             }
+            .instrument(info_span!("Analyze", repo = repo.as_str()))
         })
+        .instrument(info_span!("Aggregate stats"))
         .await;
 
-    dbg!((&stats,stats.npe2 as f32/(stats.success as f32)));
+    dbg!((&stats, stats.npe2 as f32 / (stats.success as f32)));
     Ok(())
 }
 
-//     for plugin in resp.keys() {
-//         let body = reqwest::get(format!("https://api.napari-hub.org/plugins/{}", plugin))
-//             .await?
-//             .text()
-//             .await?;
-//         let res: serde_json::Value = serde_json::from_str(&body)?;
-//         let release_date = DateTime::parse_from_rfc3339(res["release_date"].as_str().unwrap())?;
-//         println!(
-//             "{:?}  {:?} {:?}",
-//             res["code_repository"],
-//             release_date,
-//             release_date > date_cutoff
-//         );
+fn main() -> Result<()> {
+    let (chrome_layer, _guard) = ChromeLayerBuilder::new().include_args(true).build();
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(chrome_layer)
+        .with(EnvFilter::from_default_env())
+        .init();
 
-//         if release_date > date_cutoff {
-//             let repo = res["code_repository"]
-//                 .as_str()
-//                 .ok_or(anyhow!("missing 'code_repository' field"))?
-//                 .trim_start_matches("https://github.com/");
-//             let branches = ["main", "master"];
-//             let mut any = false;
-//             let mut is_npe2 = false;
-//             for branch in branches {
-//                 let (any_,is_npe2_)=analyze_plugin(repo, branch).await?;
-//                 any|=any_;
-//                 is_npe2|=is_npe2_;
-//                 if is_npe2 || any {
-//                     break;
-//                 }
-//             }
-//             dbg!((plugin, any, is_npe2));
-//             if any {
-//                 hits += 1;
-//                 npe2s += if is_npe2 { 1 } else { 0 };
-//             }
-//         }
-//     }
-//     dbg!((hits, npe2s, npe2s as f32 / (hits as f32)));
+    let rt = Builder::new_multi_thread().enable_all().build()?;
+    rt.block_on(run())?;
 
-//     Ok(())
-// }
+    Ok(())
+}

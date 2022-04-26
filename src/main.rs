@@ -14,7 +14,7 @@ use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-const CONCURRENT_REQUESTS: usize = 2;
+const CONCURRENT_REQUESTS: usize = 4;
 
 #[derive(Debug, Default)]
 struct Stats {
@@ -42,13 +42,15 @@ async fn analyze_plugin2(client: &Client, repo: &str, branch: &str) -> Result<(b
                     .into_iter()
                     .any(|tgt| body.find(tgt).is_some());
                 any = true;
-                if is_npe2 {                    
+                if is_npe2 {
+                    info!("DETECTED NPE2 for {}",repo);                    
                     return Ok((true, true));
                 }
             }
             Err(_) => {}
         }
     }
+    info!("No npe2 for {}",repo);
     Ok((any, false))
 }
 

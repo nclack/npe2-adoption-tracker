@@ -102,10 +102,11 @@ async fn run() -> Result<()> {
             ready(if let Ok(body) = res {
                 let res: serde_json::Value =
                     serde_json::from_str(&body).expect("Expected a json body.");
+                let has_code_repository=res["code_repository"].as_str().is_some();
                 let release_date =
                     DateTime::parse_from_rfc3339(res["first_released"].as_str().unwrap())
                         .expect("Could not parse as rfc3339 datetime string");
-                if release_date > date_cutoff {
+                if has_code_repository && release_date > date_cutoff {
                     Some(res)
                 } else {
                     None

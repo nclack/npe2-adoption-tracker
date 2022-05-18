@@ -250,7 +250,7 @@ fn main() -> Result<()> {
         .init();
 
     let rt = Builder::new_multi_thread().enable_all().build()?;
-    rt.block_on(run2())?;
+    rt.block_on(run1())?;
 
     Ok(())
 }

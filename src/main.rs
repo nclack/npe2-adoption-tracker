@@ -182,7 +182,7 @@ struct Record {
 async fn run2() -> Result<()> {
     let client = Client::new();
     let stats = stream::iter(
-        csv::Reader::from_reader(include_str!("data/repos_created_after_2022-01-17.csv").as_bytes())
+        csv::Reader::from_reader(include_str!("data/plugin_repos_until_2022-06-01.csv").as_bytes())
             .deserialize()
             .flat_map(|x| x) // ignore any per-row errors
             .map(|record: Record| {
@@ -250,7 +250,7 @@ fn main() -> Result<()> {
         .init();
 
     let rt = Builder::new_multi_thread().enable_all().build()?;
-    rt.block_on(run1())?;
+    rt.block_on(run2())?;
 
     Ok(())
 }

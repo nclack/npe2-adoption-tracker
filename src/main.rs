@@ -182,7 +182,7 @@ struct Record {
 async fn run2() -> Result<()> {
     let client = Client::new();
     let stats = stream::iter(
-        csv::Reader::from_reader(include_str!("data/plugin_repos_until_2022-06-01.csv").as_bytes())
+        csv::Reader::from_reader(include_str!("data/24jun22.csv").as_bytes())
             .deserialize()
             .flat_map(|x| x) // ignore any per-row errors
             .map(|record: Record| {
